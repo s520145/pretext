@@ -1,12 +1,12 @@
 import {
   layout,
-  layoutWithLines,
   prepareWithSegments,
   type PreparedTextWithSegments,
 } from '../src/layout.ts'
 
 type ProbeLine = {
   text: string
+  renderedText: string
   contentText: string
   start: number
   end: number
@@ -22,6 +22,10 @@ type ProbeBreakMismatch = {
   browserStart: number
   oursEnd: number
   browserEnd: number
+  oursText: string
+  browserText: string
+  oursRenderedText: string
+  browserRenderedText: string
   oursContext: string
   browserContext: string
   deltaText: string
@@ -93,6 +97,19 @@ document.body.appendChild(diagnosticDiv)
 const diagnosticCanvas = document.createElement('canvas')
 const diagnosticCtx = diagnosticCanvas.getContext('2d')!
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+const diagnosticLineFitEpsilon = (() => {
+  const ua = navigator.userAgent
+  const vendor = navigator.vendor
+  const isSafari =
+    vendor === 'Apple Computer, Inc.' &&
+    ua.includes('Safari/') &&
+    !ua.includes('Chrome/') &&
+    !ua.includes('Chromium/') &&
+    !ua.includes('CriOS/') &&
+    !ua.includes('FxiOS/') &&
+    !ua.includes('EdgiOS/')
+  return isSafari ? 1 / 64 : 0.002
+})()
 
 function withRequestId<T extends ProbeReport>(report: T): ProbeReport {
   return requestId === undefined ? report : { ...report, requestId }
@@ -184,6 +201,7 @@ function getBrowserLines(prepared: PreparedTextWithSegments, measuredFont: strin
     const content = getLineContent(currentLine, currentEnd)
     lines.push({
       text: currentLine,
+      renderedText: currentLine,
       contentText: content.text,
       start: currentStart,
       end: currentEnd,
@@ -262,41 +280,113 @@ function getOurLines(
   contentWidth: number,
   measuredFont: string,
 ): ProbeLine[] {
-  const lines = layoutWithLines(prepared, contentWidth, lineHeight).lines
   const result: ProbeLine[] = []
-  let rawOffset = 0
-  const segmentStarts = new Map<number, number>()
-  let segmentOffset = 0
+  const { widths, isSpace: isSp, breakableWidths, segments } = prepared
+  if (widths.length === 0) return result
 
-  for (let i = 0; i < prepared.segments.length; i++) {
-    segmentStarts.set(segmentOffset, i)
-    segmentOffset += prepared.segments[i]!.length
-  }
+  let offset = 0
+  let lineStart = 0
+  let lineEnd = 0
+  let lineContentEnd = 0
+  let lineRenderedText = ''
+  let lineW = 0
+  let hasContent = false
 
-  for (const line of lines) {
-    const start = rawOffset
-    const visibleEnd = start + line.text.length
-    let end = visibleEnd
-    while (true) {
-      const nextSegmentIndex = segmentStarts.get(end)
-      if (nextSegmentIndex === undefined || prepared.isSpace[nextSegmentIndex] !== true) break
-      end += prepared.segments[nextSegmentIndex]!.length
-    }
-
-    const content = getLineContent(normalizedText.slice(start, visibleEnd), visibleEnd)
+  function pushCurrentLine(): void {
+    if (!hasContent) return
+    const content = getLineContent(lineRenderedText, lineContentEnd)
+    const logicalText = normalizedText.slice(lineStart, content.end)
     result.push({
-      text: normalizedText.slice(start, visibleEnd),
+      text: logicalText,
+      renderedText: lineRenderedText,
       contentText: content.text,
-      start,
-      end,
+      start: lineStart,
+      end: lineEnd,
       contentEnd: content.end,
       fullWidth: measureCanvasText(content.text, measuredFont),
       domWidth: measureDomText(content.text, measuredFont, direction),
-      sumWidth: measurePreparedSlice(prepared, start, content.end, measuredFont),
+      sumWidth: measurePreparedSlice(prepared, lineStart, content.end, measuredFont),
     })
-    rawOffset = end
+    hasContent = false
+    lineRenderedText = ''
+    lineW = 0
+    lineStart = lineEnd
+    lineContentEnd = lineEnd
   }
 
+  function appendToCurrentLine(textPart: string, width: number, start: number, end: number): void {
+    if (!hasContent) {
+      lineStart = start
+      hasContent = true
+    }
+    lineRenderedText += textPart
+    lineW += width
+    lineEnd = end
+    lineContentEnd = end
+  }
+
+  function layoutBreakableSegment(segIndex: number, segStart: number): void {
+    const graphemeWidths = breakableWidths[segIndex]!
+    let graphemeIndex = 0
+    let localOffset = 0
+
+    for (const grapheme of graphemeSegmenter.segment(segments[segIndex]!)) {
+      const gw = graphemeWidths[graphemeIndex]!
+      const gStart = segStart + localOffset
+      localOffset += grapheme.segment.length
+      const gEnd = segStart + localOffset
+
+      if (hasContent && lineW + gw > contentWidth + diagnosticLineFitEpsilon) {
+        pushCurrentLine()
+      }
+
+      appendToCurrentLine(grapheme.segment, gw, gStart, gEnd)
+      graphemeIndex++
+    }
+
+    offset = segStart + localOffset
+  }
+
+  for (let i = 0; i < widths.length; i++) {
+    const segStart = offset
+    const segText = segments[i]!
+    const segEnd = segStart + segText.length
+    const w = widths[i]!
+
+    if (!hasContent) {
+      if (w > contentWidth && breakableWidths[i] !== null) {
+        layoutBreakableSegment(i, segStart)
+      } else {
+        appendToCurrentLine(segText, w, segStart, segEnd)
+        offset = segEnd
+      }
+      continue
+    }
+
+    const newW = lineW + w
+    if (newW > contentWidth + diagnosticLineFitEpsilon) {
+      if (isSp[i]) {
+        lineEnd = segEnd
+        offset = segEnd
+        continue
+      }
+
+      if (w > contentWidth && breakableWidths[i] !== null) {
+        pushCurrentLine()
+        layoutBreakableSegment(i, segStart)
+      } else {
+        pushCurrentLine()
+        appendToCurrentLine(segText, w, segStart, segEnd)
+        offset = segEnd
+      }
+      continue
+    }
+
+    appendToCurrentLine(segText, w, segStart, segEnd)
+    offset = segEnd
+  }
+
+  pushCurrentLine()
   return result
 }
 
@@ -344,6 +434,10 @@ function getFirstBreakMismatch(
         browserStart: browser?.start ?? -1,
         oursEnd,
         browserEnd,
+        oursText: ours?.contentText ?? '',
+        browserText: browser?.contentText ?? '',
+        oursRenderedText: ours?.renderedText ?? '',
+        browserRenderedText: browser?.renderedText ?? browser?.text ?? '',
         oursContext: formatBreakContext(normalizedText, oursEnd),
         browserContext: formatBreakContext(normalizedText, browserEnd),
         deltaText: normalizedText.slice(minEnd, maxEnd),

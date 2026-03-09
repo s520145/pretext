@@ -47,12 +47,14 @@ Internal notes for contributors and agents. Use `README.md` as the public source
 - For Gatsby canary work, sweep widths cheaply first and only diagnose the mismatching widths in detail. The slow detailed checker is for narrowing root causes, not for every width by default.
 - For Arabic corpus work, trust the RTL `Range`-based diagnostics over the old span-probe path. The remaining misses are currently more about break policy than raw width sums.
 - For Arabic probe work, always use normalized corpus slices and the exact corpus font. Raw file offsets or a rough fallback font will mislead you.
+- The corpus/probe diagnostic pages now compute our line offsets directly from prepared segments and grapheme fallbacks; do not go back to reconstructing them from `layoutWithLines().line.text.length`.
+- The Arabic corpus text has already been cleaned for quote-before-punctuation spacing artifacts like `" ،`, `" .`, and `" ؟`; treat that as corpus hygiene, not as engine behavior.
 
 ### Open questions
 
 - Locale switch: expose a way to reinitialize the hoisted segmenters and clear cache for a new locale.
 - Decide whether line-fit tolerance should stay as a browser-specific shim or move to runtime calibration alongside emoji correction.
-- Decide whether remaining Arabic accuracy needs a richer break-policy model or a truly shaping-aware architecture beyond segment-sum layout.
+- If a future Arabic corpus still exposes misses after preprocessing and corpus cleanup, decide whether that needs a richer break-policy model or a truly shaping-aware architecture beyond segment-sum layout.
 - `layoutWithLines()` may want ranges/indices instead of `{ text, width }` to avoid materializing substrings.
 - ASCII fast path could skip some CJK, bidi, and emoji overhead.
 - Benchmark methodology still needs review.

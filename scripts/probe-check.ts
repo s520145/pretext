@@ -21,6 +21,10 @@ type ProbeReport = {
     browserStart: number
     oursEnd: number
     browserEnd: number
+    oursText: string
+    browserText: string
+    oursRenderedText: string
+    browserRenderedText: string
     oursContext: string
     browserContext: string
     deltaText: string
@@ -76,6 +80,10 @@ function printReport(report: ProbeReport): void {
     console.log(`  break L${mismatch.line}: ${mismatch.reasonGuess}`)
     console.log(`  offsets: ours ${mismatch.oursStart}-${mismatch.oursEnd} | browser ${mismatch.browserStart}-${mismatch.browserEnd}`)
     console.log(`  delta: ${JSON.stringify(mismatch.deltaText)}`)
+    console.log(`  ours text:    ${JSON.stringify(mismatch.oursText)}`)
+    console.log(`  browser text: ${JSON.stringify(mismatch.browserText)}`)
+    console.log(`  ours rendered:    ${JSON.stringify(mismatch.oursRenderedText)}`)
+    console.log(`  browser rendered: ${JSON.stringify(mismatch.browserRenderedText)}`)
     console.log(`  ours:    ${mismatch.oursContext}`)
     console.log(`  browser: ${mismatch.browserContext}`)
     console.log(

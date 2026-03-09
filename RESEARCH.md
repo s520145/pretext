@@ -472,6 +472,40 @@ So Arabic is now in a much narrower place:
 - no hot-path `measureText()` verification was reintroduced
 - the browser-facing public API stayed `prepare()` / `layout()`
 
+## Arabic diagnostics correction and corpus punctuation cleanup
+
+The next Arabic pass turned up two different problems, and only one of them belonged in the engine.
+
+First, the corpus and probe diagnostics were still reconstructing our logical line offsets from
+`layoutWithLines().line.text.length`. That drifted once an earlier line no longer mapped cleanly
+back to the normalized text. The symptom was misleading reports like:
+- `... وجئت وهو نائ|مٌ ...`
+
+even though the actual rendered line from `layoutWithLines()` still contained the whole word.
+
+The fix was to stop reconstructing offsets and instead walk the prepared segments and grapheme
+fallbacks directly inside the diagnostics pages, using the same line-fit epsilon as `layout()`.
+
+Second, the last Arabic coarse miss at `360px` turned out to be a corpus artifact, not a new engine
+rule. The text had quote-before-punctuation spacing like:
+- `" ،`
+- `" .`
+- `" ؟`
+
+This came from the cleaned Wikisource text, not from CSS/browser behavior we wanted to model.
+Normalizing those quote-adjacent punctuation spaces in the Arabic corpus removed the final coarse
+mismatches cleanly, without adding another Arabic-specific layout heuristic.
+
+After those two changes:
+- Arabic coarse corpus sweep: `61/61 exact`
+- Korean coarse corpus sweep: `61/61 exact`
+- Hindi coarse corpus sweep: `61/61 exact`
+
+The remaining lesson is:
+- keep using the real browser probe/corpus pages for multilingual work
+- distrust reconstructed offsets when a mismatch suddenly looks stranger than the height diff
+- prefer corpus cleanup over engine rules when the remaining miss is clearly source-text noise
+
 The current verification loop:
 - `bun run accuracy-check`
 - `bun run accuracy-check:safari`

@@ -60,6 +60,10 @@ type CorpusReport = {
     browserStart: number
     oursEnd: number
     browserEnd: number
+    oursText: string
+    browserText: string
+    oursRenderedText: string
+    browserRenderedText: string
     oursContext: string
     browserContext: string
     deltaText: string
@@ -69,6 +73,12 @@ type CorpusReport = {
     oursFullWidth: number
     browserDomWidth: number
     browserFullWidth: number
+    oursSegments: Array<{
+      text: string
+      width: number
+      domWidth: number
+      isSpace: boolean
+    }>
   } | null
   maxLineWidthDrift?: number
   maxDriftLine?: {
@@ -183,11 +193,21 @@ function printReport(report: CorpusReport): void {
     console.log(`  break L${mismatch.line}: ${mismatch.reasonGuess}`)
     console.log(`  offsets: ours ${mismatch.oursStart}-${mismatch.oursEnd} | browser ${mismatch.browserStart}-${mismatch.browserEnd}`)
     console.log(`  delta: ${JSON.stringify(mismatch.deltaText)}`)
+    console.log(`  ours text:    ${JSON.stringify(mismatch.oursText)}`)
+    console.log(`  browser text: ${JSON.stringify(mismatch.browserText)}`)
+    console.log(`  ours rendered:    ${JSON.stringify(mismatch.oursRenderedText)}`)
+    console.log(`  browser rendered: ${JSON.stringify(mismatch.browserRenderedText)}`)
     console.log(`  ours:    ${mismatch.oursContext}`)
     console.log(`  browser: ${mismatch.browserContext}`)
     console.log(
       `  widths: ours sum/dom/full ${mismatch.oursSumWidth.toFixed(3)}/${mismatch.oursDomWidth.toFixed(3)}/${mismatch.oursFullWidth.toFixed(3)} | browser dom/full ${mismatch.browserDomWidth.toFixed(3)}/${mismatch.browserFullWidth.toFixed(3)}`,
     )
+    if (mismatch.oursSegments.length > 0) {
+      const summary = mismatch.oursSegments
+        .map(segment => `${JSON.stringify(segment.text)}@${segment.width.toFixed(2)}/${segment.domWidth.toFixed(2)}${segment.isSpace ? ':space' : ''}`)
+        .join(' | ')
+      console.log(`  ours segments: ${summary}`)
+    }
   } else if (report.firstMismatch !== null && report.firstMismatch !== undefined) {
     console.log(`  first mismatch L${report.firstMismatch.line}`)
     console.log(`  ours:    ${JSON.stringify(report.firstMismatch.ours.slice(0, 120))}`)

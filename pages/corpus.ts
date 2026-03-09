@@ -77,6 +77,10 @@ type CorpusBreakMismatch = {
   browserStart: number
   oursEnd: number
   browserEnd: number
+  oursText: string
+  browserText: string
+  oursRenderedText: string
+  browserRenderedText: string
   oursContext: string
   browserContext: string
   deltaText: string
@@ -86,10 +90,17 @@ type CorpusBreakMismatch = {
   oursFullWidth: number
   browserDomWidth: number
   browserFullWidth: number
+  oursSegments: Array<{
+    text: string
+    width: number
+    domWidth: number
+    isSpace: boolean
+  }>
 }
 
 type DiagnosticLine = {
   text: string
+  renderedText: string
   contentText: string
   start: number
   end: number
@@ -194,6 +205,19 @@ lineProbeDiv.style.padding = `${PADDING}px`
 document.body.appendChild(lineProbeDiv)
 
 const diagnosticGraphemeSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+const diagnosticLineFitEpsilon = (() => {
+  const ua = navigator.userAgent
+  const vendor = navigator.vendor
+  const isSafari =
+    vendor === 'Apple Computer, Inc.' &&
+    ua.includes('Safari/') &&
+    !ua.includes('Chrome/') &&
+    !ua.includes('Chromium/') &&
+    !ua.includes('CriOS/') &&
+    !ua.includes('FxiOS/') &&
+    !ua.includes('EdgiOS/')
+  return isSafari ? 1 / 64 : 0.002
+})()
 
 let corpusList: CorpusMeta[] = []
 let currentMeta: CorpusMeta | null = null
@@ -304,6 +328,7 @@ function pushDiagnosticLine(
   const content = getLineContent(text, end)
   lines.push({
     text,
+    renderedText: text,
     contentText: content.text,
     start,
     end,
@@ -425,44 +450,116 @@ function getOurLines(
   prepared: PreparedTextWithSegments,
   normalizedText: string,
   maxWidth: number,
-  lineHeight: number,
   font: string,
 ): DiagnosticLine[] {
-  const layoutLines = layoutWithLines(prepared, maxWidth, lineHeight).lines
   const lines: DiagnosticLine[] = []
-  let rawOffset = 0
-  const segmentStarts = new Map<number, number>()
+  const { widths, isSpace: isSp, breakableWidths, segments } = prepared
+  if (widths.length === 0) return lines
 
-  let segmentOffset = 0
-  for (let i = 0; i < prepared.segments.length; i++) {
-    segmentStarts.set(segmentOffset, i)
-    segmentOffset += prepared.segments[i]!.length
-  }
+  let offset = 0
+  let lineStart = 0
+  let lineEnd = 0
+  let lineContentEnd = 0
+  let lineRenderedText = ''
+  let lineW = 0
+  let hasContent = false
 
-  for (const line of layoutLines) {
-    const start = rawOffset
-    const visibleEnd = start + line.text.length
-    let end = visibleEnd
-    while (true) {
-      const nextIndex = segmentStarts.get(end)
-      if (nextIndex === undefined || prepared.isSpace[nextIndex] !== true) break
-      end += prepared.segments[nextIndex]!.length
-    }
-    const logicalText = normalizedText.slice(start, visibleEnd)
-    const content = getLineContent(logicalText, visibleEnd)
+  function pushCurrentLine(): void {
+    if (!hasContent) return
+    const content = getLineContent(lineRenderedText, lineContentEnd)
+    const logicalText = normalizedText.slice(lineStart, content.end)
     lines.push({
       text: logicalText,
+      renderedText: lineRenderedText,
       contentText: content.text,
-      start,
-      end,
+      start: lineStart,
+      end: lineEnd,
       contentEnd: content.end,
-      sumWidth: measurePreparedSlice(prepared, start, content.end, font),
+      sumWidth: measurePreparedSlice(prepared, lineStart, content.end, font),
       fullWidth: measureFullTextWidth(content.text, font),
-      rawFullWidth: measureFullTextWidth(normalizedText.slice(start, end), font),
+      rawFullWidth: measureFullTextWidth(normalizedText.slice(lineStart, lineEnd), font),
     })
-    rawOffset = end
+
+    hasContent = false
+    lineRenderedText = ''
+    lineW = 0
+    lineStart = lineEnd
+    lineContentEnd = lineEnd
   }
 
+  function appendToCurrentLine(text: string, width: number, start: number, end: number): void {
+    if (!hasContent) {
+      lineStart = start
+      hasContent = true
+    }
+    lineRenderedText += text
+    lineW += width
+    lineEnd = end
+    lineContentEnd = end
+  }
+
+  function layoutBreakableSegment(segIndex: number, segStart: number): void {
+    const graphemeWidths = breakableWidths[segIndex]!
+    let graphemeIndex = 0
+    let localOffset = 0
+
+    for (const grapheme of diagnosticGraphemeSegmenter.segment(segments[segIndex]!)) {
+      const gw = graphemeWidths[graphemeIndex]!
+      const gStart = segStart + localOffset
+      localOffset += grapheme.segment.length
+      const gEnd = segStart + localOffset
+
+      if (hasContent && lineW + gw > maxWidth + diagnosticLineFitEpsilon) {
+        pushCurrentLine()
+      }
+
+      appendToCurrentLine(grapheme.segment, gw, gStart, gEnd)
+      graphemeIndex++
+    }
+
+    offset = segStart + localOffset
+  }
+
+  for (let i = 0; i < widths.length; i++) {
+    const segStart = offset
+    const segText = segments[i]!
+    const segEnd = segStart + segText.length
+    const w = widths[i]!
+
+    if (!hasContent) {
+      if (w > maxWidth && breakableWidths[i] !== null) {
+        layoutBreakableSegment(i, segStart)
+      } else {
+        appendToCurrentLine(segText, w, segStart, segEnd)
+        offset = segEnd
+      }
+      continue
+    }
+
+    const newW = lineW + w
+    if (newW > maxWidth + diagnosticLineFitEpsilon) {
+      if (isSp[i]) {
+        lineEnd = segEnd
+        offset = segEnd
+        continue
+      }
+
+      if (w > maxWidth && breakableWidths[i] !== null) {
+        pushCurrentLine()
+        layoutBreakableSegment(i, segStart)
+      } else {
+        pushCurrentLine()
+        appendToCurrentLine(segText, w, segStart, segEnd)
+        offset = segEnd
+      }
+      continue
+    }
+
+    appendToCurrentLine(segText, w, segStart, segEnd)
+    offset = segEnd
+  }
+
+  pushCurrentLine()
   return lines
 }
 
@@ -593,6 +690,7 @@ function classifyBreakMismatch(
 }
 
 function getFirstBreakMismatch(
+  prepared: PreparedTextWithSegments,
   normalizedText: string,
   contentWidth: number,
   ourLines: DiagnosticLine[],
@@ -616,6 +714,10 @@ function getFirstBreakMismatch(
         browserStart: browser?.start ?? -1,
         oursEnd,
         browserEnd,
+        oursText: ours?.contentText ?? '',
+        browserText: browser?.contentText ?? '',
+        oursRenderedText: ours?.renderedText ?? '',
+        browserRenderedText: browser?.renderedText ?? browser?.text ?? '',
         oursContext: formatBreakContext(normalizedText, oursEnd),
         browserContext: formatBreakContext(normalizedText, browserEnd),
         deltaText: normalizedText.slice(minEnd, maxEnd),
@@ -625,6 +727,7 @@ function getFirstBreakMismatch(
         oursFullWidth: ours?.fullWidth ?? 0,
         browserDomWidth: browser?.domWidth ?? 0,
         browserFullWidth: browser?.fullWidth ?? 0,
+        oursSegments: ours ? getLineSegments(prepared, ours.start, ours.end, font, direction) : [],
       }
     }
   }
@@ -704,7 +807,7 @@ function addDiagnostics(
     return report
   }
 
-  const ourLines = getOurLines(prepared, normalizedText, contentWidth, lineHeight, font)
+  const ourLines = getOurLines(prepared, normalizedText, contentWidth, font)
   const probeResult = getBrowserLinesFromSpans(prepared, lineProbeDiv, normalizedText, font)
   const probeHeight = probeResult.height
   const normalizedHeight = diagnosticDiv.getBoundingClientRect().height
@@ -761,7 +864,7 @@ function addDiagnostics(
     normalizedHeight,
     mismatchCount,
     firstMismatch,
-    firstBreakMismatch: getFirstBreakMismatch(normalizedText, contentWidth, ourLines, browserLines, font, direction),
+    firstBreakMismatch: getFirstBreakMismatch(prepared, normalizedText, contentWidth, ourLines, browserLines, font, direction),
     maxLineWidthDrift,
     maxDriftLine,
   }
