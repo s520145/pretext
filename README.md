@@ -32,9 +32,14 @@ const { height, lineCount } = layout(prepared, textWidth, 20) // pure arithmetic
 
 If you want textarea-like text where ordinary spaces, `\t` tabs, and `\n` hard breaks stay visible, pass `{ whiteSpace: 'pre-wrap' }` to `prepare()` / `prepareWithSegments()`.
 
-On the current local benchmark snapshot:
-- `prepare()` is about `17ms` for the shared 500-text batch
-- `layout()` is about `0.10ms` for that same batch
+```ts
+const prepared = prepare(textareaValue, '16px Inter', { whiteSpace: 'pre-wrap' })
+const { height } = layout(prepared, textareaWidth, 20)
+```
+
+On the current checked-in benchmark snapshot:
+- `prepare()` is about `19ms` for the shared 500-text batch
+- `layout()` is about `0.09ms` for that same batch
 
 We support all the languages you can imagine, including emojis and mixed-bidi, and caters to specific browser quirks
 
@@ -129,7 +134,7 @@ Pretext doesn't try to be a full font rendering engine (yet?). It currently targ
 - `word-break: normal`
 - `overflow-wrap: break-word`
 - `line-break: auto`
-- If you pass `{ whiteSpace: 'pre-wrap' }`, ordinary spaces, `\t` tabs, and `\n` hard breaks are preserved instead of collapsed. Tabs follow the default browser-style tab stops, so this is still narrower than the full CSS `pre-wrap` surface.
+- If you pass `{ whiteSpace: 'pre-wrap' }`, ordinary spaces, `\t` tabs, and `\n` hard breaks are preserved instead of collapsed. Tabs follow the default browser-style `tab-size: 8`. The other wrapping defaults stay the same: `word-break: normal`, `overflow-wrap: break-word`, and `line-break: auto`.
 - `system-ui` is unsafe for `layout()` accuracy on macOS. Use a named font.
 - Because the default target includes `overflow-wrap: break-word`, very narrow widths can still break inside words, but only at grapheme boundaries.
 

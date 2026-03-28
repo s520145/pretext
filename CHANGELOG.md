@@ -2,9 +2,11 @@
 
 ## Unreleased
 
+## 0.0.2 - 2026-03-28
+
 ### Added
 
-- GitHub Pages demo-site build and deployment workflow.
+- `{ whiteSpace: 'pre-wrap' }` mode for textarea-like text, preserving ordinary spaces, tabs, and hard breaks.
 
 ## 0.0.1 - 2026-03-27
 
